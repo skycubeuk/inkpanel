@@ -12,3 +12,6 @@
 # Local clones prepared for upstream contributions
 /upstream/
 __pycache__/
+
+# Stock flash dumps are 16 MB each; keep them local
+/backup/

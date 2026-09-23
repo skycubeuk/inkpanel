@@ -9,10 +9,14 @@ esphome/components/xteink/UPSTREAM_COMMIT, with the patches in patches/ applied.
 Its own LICENSE is kept alongside it as LICENSE.upstream, and upstream's NOTICE
 is reproduced below.
 
-Material Design Icons codepoints in tools/panelgen/mdi.json are derived from
-Templarian/MaterialDesign-Webfont (https://github.com/Templarian/MaterialDesign-Webfont),
-SIL Open Font License 1.1. The font itself is not redistributed here; ESPHome
-downloads it at build time.
+tools/panelgen/mdi.json holds Material Design Icons name-to-codepoint pairs
+extracted from css/materialdesignicons.css in Templarian/MaterialDesign-Webfont
+(https://github.com/Templarian/MaterialDesign-Webfont), @mdi/font 7.4.47,
+released under the Pictogrammers Free License: icons and fonts Apache 2.0, code
+MIT. No glyph artwork is redistributed here - ESPHome downloads the font at
+build time, and a firmware image built from this project embeds only the glyphs
+that image references (Apache 2.0, attribution required if you redistribute
+binaries). Regenerate with tools/update-mdi.py.
 
 Roboto is downloaded from Google Fonts at build time (Apache License 2.0).
 
