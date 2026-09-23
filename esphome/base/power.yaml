@@ -1,0 +1,55 @@
+deep_sleep:
+  id: sleeper
+  wakeup_pin:
+    number: GPIO3          # power button, active low, pull-up held through sleep
+    inverted: true
+    mode: { input: true, pullup: true }
+  wakeup_pin_mode: IGNORE
+
+number:
+  - platform: template
+    id: sleep_timeout
+    name: Sleep timeout
+    optimistic: true
+    restore_value: true
+    initial_value: 60
+    min_value: 15
+    max_value: 600
+    step: 15
+    unit_of_measurement: s
+    entity_category: config
+
+switch:
+  - platform: template
+    id: keep_awake
+    name: Keep awake
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_OFF   # survives reboots once switched on
+    entity_category: config
+    on_turn_on:
+      - deep_sleep.prevent: sleeper
+    on_turn_off:
+      - deep_sleep.allow: sleeper
+      - script.execute: inactivity
+
+script:
+  - id: inactivity
+    mode: restart
+    then:
+      - delay: !lambda 'return (uint32_t) id(sleep_timeout).state * 1000;'
+      - if:
+          condition:
+            switch.is_on: keep_awake
+          then:
+            - logger.log: "Inactivity timeout but Keep awake is on"
+          else:
+            - logger.log: "Inactivity timeout, sleeping"
+            - lambda: 'global_preferences->sync();'   # persist last_page before sleeping
+            - light.turn_off: frontlight
+            - deep_sleep.enter: sleeper
+
+esphome:
+  on_boot:
+    priority: -100
+    then:
+      - script.execute: inactivity

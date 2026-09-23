@@ -1,0 +1,27 @@
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+      # Optional: pin to the 2.4 GHz radio of a dual-band SSID. Delete if unused.
+      bssid: !secret wifi_bssid_24ghz
+  fast_connect: true
+  # Light power save: the radio naps between router beacons but stays associated.
+  # Taps wake it immediately; incoming updates can wait up to one beacon interval
+  # (~100-300 ms). Baseline with "none" was ~10 h on battery.
+  power_save_mode: light
+  ap:
+    ssid: "${friendly_name} Fallback"
+    password: !secret ap_password
+
+captive_portal:
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+    on_begin:
+      - logger.log: "OTA starting"
+      - deep_sleep.prevent: sleeper

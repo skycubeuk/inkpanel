@@ -1,0 +1,191 @@
+diff --git a/esphome/components/xteink/__init__.py b/esphome/components/xteink/__init__.py
+index aa0f76f..1dd69e1 100644
+--- a/esphome/components/xteink/__init__.py
++++ b/esphome/components/xteink/__init__.py
+@@ -158,6 +158,10 @@ async def to_code(config):
+     cg.add_build_flag(f"-D{MODELS[config[CONF_MODEL]][1]}=1")
+     # One 48 KB framebuffer; the panel controller's RAM holds the previous frame.
+     cg.add_build_flag("-DEINK_DISPLAY_SINGLE_BUFFER_MODE=1")
++    if config[CONF_MODEL] == "x4_pro":
++        # Frontlight PWM clocked from RC_FAST so it keeps running through light sleep
++        # (costs sleep current only while the light is lit; see FrontlightManager).
++        cg.add_build_flag("-DFREEINK_FRONTLIGHT_LS=1")
+ 
+     # file:///abs/path is understood by PlatformIO (ESPHome <= 2026.7, copied into
+     # .piolibdeps) and by ESPHome >= 2026.8's own library-to-IDF-component converter.
+diff --git a/esphome/components/xteink/sdk/libs/hardware/BoardConfig/include/BoardConfig.h b/esphome/components/xteink/sdk/libs/hardware/BoardConfig/include/BoardConfig.h
+index 9b4cb6c..6d040fc 100644
+--- a/esphome/components/xteink/sdk/libs/hardware/BoardConfig/include/BoardConfig.h
++++ b/esphome/components/xteink/sdk/libs/hardware/BoardConfig/include/BoardConfig.h
+@@ -1646,7 +1646,13 @@ constexpr BoardProfile XTEINK_X4_PRO = {
+     // duty).
+     // GPIO8 is the hardware-confirmed cool channel and GPIO9 the warm channel;
+     // FrontlightManager mixes them for color-temperature control.
++#ifdef FREEINK_FRONTLIGHT_LS
++    // RC_FAST (~17.5 MHz) cannot clock 25 kHz at 10 bits (needs 25.6 MHz), so the
++    // light-sleep LEDC attach fails and the light stays dark; 9 bits needs 12.8 MHz.
++    {8, 25000, 9, true, 9},
++#else
+     {8, 25000, 10, true, 9},
++#endif
+     NO_AUDIO,
+     NO_LEDS,
+     NO_FLIP,  // panel mount transform pending hardware; native SSD1677 scan is 800x480 landscape
+diff --git a/esphome/components/xteink/touch.cpp b/esphome/components/xteink/touch.cpp
+index 5fa7e39..ddc6f8b 100644
+--- a/esphome/components/xteink/touch.cpp
++++ b/esphome/components/xteink/touch.cpp
+@@ -1,7 +1,12 @@
+ #include "touch.h"
+ 
++#include "esphome/core/application.h"
+ #include "esphome/core/log.h"
+ 
++#include "driver/gpio.h"
++#include "esp_sleep.h"
++#include "hal/gpio_ll.h"
++
+ namespace esphome {
+ namespace xteink {
+ 
+@@ -16,7 +21,89 @@ void XteinkTouchscreen::setup() {
+   }
+ }
+ 
++void IRAM_ATTR XteinkTouchscreen::irq_isr_(void *arg) {
++  auto *self = static_cast<XteinkTouchscreen *>(arg);
++  gpio_ll_intr_disable(&GPIO, self->irq_gpio_);  // level interrupt: fire once until re-armed
++  self->irq_enabled_ = false;
++  self->irq_fired_ = true;
++  self->irq_count_++;
++  BaseType_t woken = pdFALSE;
++  App.wake_loop_isrsafe(&woken);
++  if (woken)
++    portYIELD_FROM_ISR();
++}
++
++void XteinkTouchscreen::enable_irq_wake(int gpio) {
++  const auto pin = static_cast<gpio_num_t>(gpio);
++  this->irq_gpio_ = gpio;
++  gpio_intr_disable(pin);
++  this->lvl_before_ = gpio_get_level(pin);
++  // Also sets the pin's interrupt type to LOW level, used by irq_isr_ below.
++  esp_err_t e = gpio_wakeup_enable(pin, GPIO_INTR_LOW_LEVEL);
++  this->lvl_after_ = gpio_get_level(pin);
++  if (e == ESP_OK)
++    e = esp_sleep_enable_gpio_wakeup();
++  if (e == ESP_OK) {
++    const esp_err_t svc = gpio_install_isr_service(ESP_INTR_FLAG_IRAM);
++    e = (svc == ESP_OK || svc == ESP_ERR_INVALID_STATE) ? gpio_isr_handler_add(pin, irq_isr_, this) : svc;
++  }
++  this->irq_setup_err_ = e;
++  this->irq_idle_level_ = gpio_get_level(pin);
++  ESP_LOGI(TAG, "Touch IRQ wake on GPIO%d: %s (idle level %d)", gpio, esp_err_to_name(e), this->irq_idle_level_);
++  if (e != ESP_OK)
++    this->irq_gpio_ = -1;
++}
++
++void XteinkTouchscreen::arm_irq_wake() {
++  if (this->irq_gpio_ < 0)
++    return;
++  this->irq_wanted_ = true;
++  this->irq_fired_ = false;
++  this->rearm_irq_if_idle_line_();
++}
++
++void XteinkTouchscreen::disarm_irq_wake() {
++  this->irq_wanted_ = false;
++  if (this->irq_gpio_ >= 0) {
++    gpio_intr_disable(static_cast<gpio_num_t>(this->irq_gpio_));
++    this->irq_enabled_ = false;
++  }
++}
++
++// Re-enable only once INT is back HIGH (no finger, no pending report); enabling a
++// LOW-level interrupt while the line is still LOW would fire again at once.
++void XteinkTouchscreen::rearm_irq_if_idle_line_() {
++  if (!this->irq_wanted_ || this->irq_enabled_ || this->irq_gpio_ < 0)
++    return;
++  const auto pin = static_cast<gpio_num_t>(this->irq_gpio_);
++  if (gpio_get_level(pin) == 0)
++    return;
++  this->irq_enabled_ = true;
++  gpio_intr_enable(pin);
++}
++
++void XteinkTouchscreen::loop() {
++  if (this->irq_fired_) {
++    // A finger woke us: process the touch now instead of waiting for the poller,
++    // with a fresh GT911 read (the hub's snapshot may be up to one idle poll old).
++    this->irq_fired_ = false;
++    this->fresh_read_ = true;
++    this->store_.touched = true;
++    ESP_LOGD(TAG, "touch IRQ #%u -> fresh read", (unsigned) this->irq_count_);
++  }
++  touchscreen::Touchscreen::loop();
++  this->rearm_irq_if_idle_line_();
++}
++
+ void XteinkTouchscreen::update_touches() {
++  if (this->fresh_read_) {
++    this->fresh_read_ = false;
++    this->parent_->update();
++    const unsigned n = this->parent_->input().getTouchSnapshot().count;
++    if (n == 0)
++      this->irq_empty_++;
++    ESP_LOGD(TAG, "fresh read: %u point(s)", n);
++  }
+   const auto snapshot = this->parent_->input().getTouchSnapshot();
+   for (uint8_t i = 0; i < snapshot.count; i++) {
+     const auto &p = snapshot.points[i];
+@@ -27,6 +114,12 @@ void XteinkTouchscreen::update_touches() {
+ }
+ 
+ void XteinkTouchscreen::dump_config() {
++  ESP_LOGCONFIG(TAG, "  INT level before wake setup %d, right after %d", this->lvl_before_, this->lvl_after_);
++  ESP_LOGCONFIG(TAG, "  Touch IRQ wake: GPIO%d setup=%s idle_level=%d fired=%u empty=%u level_now=%d wanted=%d enabled=%d",
++                this->irq_gpio_, esp_err_to_name(this->irq_setup_err_), this->irq_idle_level_, (unsigned) this->irq_count_,
++                (unsigned) this->irq_empty_,
++                this->irq_gpio_ >= 0 ? gpio_get_level(static_cast<gpio_num_t>(this->irq_gpio_)) : -1,
++                this->irq_wanted_, this->irq_enabled_);
+   ESP_LOGCONFIG(TAG, "Xteink touchscreen:\n  Touch controller present: %s",
+                 YESNO(this->parent_->input().hasTouch()));
+   LOG_UPDATE_INTERVAL(this);
+diff --git a/esphome/components/xteink/touch.h b/esphome/components/xteink/touch.h
+index 81db1db..1488638 100644
+--- a/esphome/components/xteink/touch.h
++++ b/esphome/components/xteink/touch.h
+@@ -11,11 +11,33 @@ class XteinkTouchscreen : public touchscreen::Touchscreen {
+  public:
+   void set_parent(Xteink *parent) { this->parent_ = parent; }
+   void setup() override;
++  void loop() override;
+   void update_touches() override;
+   void dump_config() override;
+ 
++  /// Touch-to-wake: let the GT911 INT line (held LOW for ~10 ms per report while a
++  /// finger is down, HIGH and quiet otherwise) wake the chip from light sleep and
++  /// wake ESPHome's main loop. One-shot: the interrupt disables itself when it
++  /// fires and is re-armed with arm_irq_wake() (e.g. when the UI goes idle).
++  void enable_irq_wake(int gpio);
++  void arm_irq_wake();
++  void disarm_irq_wake();
++
+  protected:
++  static void irq_isr_(void *arg);
++  void rearm_irq_if_idle_line_();
++
+   Xteink *parent_{nullptr};
++  int irq_gpio_{-1};
++  volatile bool irq_fired_{false};
++  volatile bool irq_enabled_{false};  // hardware interrupt currently enabled
++  bool irq_wanted_{false};            // armed by the owner (idle); re-enabled automatically
++  uint32_t irq_empty_{0};             // wakes whose fresh read found no touch
++  volatile uint32_t irq_count_{0};
++  esp_err_t irq_setup_err_{ESP_FAIL};
++  int irq_idle_level_{-1};
++  int lvl_before_{-1}, lvl_after_{-1};
++  bool fresh_read_{false};
+ };
+ 
+ }  // namespace xteink

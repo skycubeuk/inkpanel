@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""inkpanel - build an e-ink Home Assistant panel from one config file."""
+import argparse, os, subprocess, sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT / "tools"))
+
+from panelgen import config, emit, icons          # noqa: E402
+
+
+def _load(path):
+    try:
+        return config.load(path)
+    except FileNotFoundError:
+        sys.exit(f"error: {path} not found. Copy panel.yaml.example to panel.yaml and edit it.")
+    except (config.ConfigError, icons.IconError) as e:
+        sys.exit(f"error in {path}: {e}")
+
+
+def cmd_generate(a):
+    panel = _load(a.config)
+    out = ROOT / "esphome" / f"{panel.name}.yaml"
+    out.write_text(emit.generate(panel), encoding="utf-8")
+    pages = sum(1 for _ in panel.pages)
+    print(f"wrote {out.relative_to(ROOT)}  ({pages} configured page(s), "
+          f"{len(out.read_text().splitlines())} lines)")
+    return out
+
+
+def cmd_validate(a):
+    panel = _load(a.config)
+    emit.generate(panel)                      # exercises icon + layout resolution
+    print(f"{a.config}: OK - {len(panel.pages)} page(s), "
+          f"{sum(len(p.entities) or 1 for p in panel.pages)} entities")
+
+
+def _esphome(args, out):
+    cmd = ["esphome", *args, str(out)]
+    print("+", " ".join(cmd))
+    return subprocess.call(cmd, cwd=ROOT / "esphome")
+
+
+def cmd_build(a):
+    out = cmd_generate(a)
+    rc = _esphome(["compile"], out.name)
+    if rc:
+        sys.exit(rc)
+    src = ROOT / "esphome/.esphome/build" / out.stem / "build/firmware.ota.bin"
+    if src.exists():
+        dst = ROOT / "firmware" / f"{out.stem}.bin"
+        dst.parent.mkdir(exist_ok=True)
+        dst.write_bytes(src.read_bytes())
+        print(f"image -> {dst.relative_to(ROOT)}  ({dst.stat().st_size/1024:.0f} KB)")
+
+
+def cmd_flash(a):
+    panel = _load(a.config)
+    img = ROOT / "firmware" / f"{panel.name}.bin"
+    if not img.exists():
+        sys.exit(f"error: {img.relative_to(ROOT)} not found - run 'tools/panel build' first.")
+    # ota_0 only. An ESPHome OTA writes the *other* slot, which is where the
+    # stock reader firmware lives.
+    sys.exit(subprocess.call([
+        "esptool", "--chip", "esp32s3", "--port", a.port, "--baud", "921600",
+        "write-flash", "0x10000", str(img)]))
+
+
+def cmd_logs(a):
+    panel = _load(a.config)
+    sys.exit(_esphome(["logs", "--device", a.device or f"{panel.name}.local"],
+                      f"{panel.name}.yaml"))
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="panel", description=__doc__)
+    ap.add_argument("-c", "--config", default=str(ROOT / "panel.yaml"))
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("validate", help="check panel.yaml without building")
+    sub.add_parser("generate", help="emit the ESPHome YAML only")
+    sub.add_parser("build", help="generate, compile, and copy the image to firmware/")
+    f = sub.add_parser("flash", help="write the image to ota_0 over USB")
+    f.add_argument("--port", default="/dev/ttyACM0")
+    lg = sub.add_parser("logs", help="stream logs over Wi-Fi")
+    lg.add_argument("--device", default=None)
+    a = ap.parse_args()
+    globals()[f"cmd_{a.cmd}"](a)
+
+
+if __name__ == "__main__":
+    main()

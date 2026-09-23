@@ -1,0 +1,33 @@
+inkpanel
+
+The generator (tools/), the ESPHome configuration (esphome/) and the
+documentation (docs/) are MIT licensed - see LICENSE.
+
+esphome/components/xteink is a vendored copy of vjFaLk/esphome-xteink
+(https://github.com/vjFaLk/esphome-xteink, MIT) at the commit recorded in
+esphome/components/xteink/UPSTREAM_COMMIT, with the patches in patches/ applied.
+Its own LICENSE is kept alongside it as LICENSE.upstream, and upstream's NOTICE
+is reproduced below.
+
+Material Design Icons codepoints in tools/panelgen/mdi.json are derived from
+Templarian/MaterialDesign-Webfont (https://github.com/Templarian/MaterialDesign-Webfont),
+SIL Open Font License 1.1. The font itself is not redistributed here; ESPHome
+downloads it at build time.
+
+Roboto is downloaded from Google Fonts at build time (Apache License 2.0).
+
+--- upstream esphome-xteink NOTICE -------------------------------------------
+
+esphome-xteink
+
+The ESPHome glue in components/xteink/*.py, *.h, *.cpp is MIT licensed (see LICENSE).
+
+components/xteink/sdk/libs is an unmodified, sparse copy of the FreeInk SDK
+(https://github.com/Free-Ink/freeink-sdk, MIT) at the commit recorded in
+components/xteink/sdk/SDK_COMMIT. Its own LICENSE and NOTICE are kept alongside
+it. FreeInk is itself derived from the OpenX4 E-Paper Community SDK
+(https://github.com/open-x4-epaper/community-sdk, MIT); the SSD1677 driver and
+panel waveforms originate with CidVonHighwind and that community.
+
+The first ESPHome integration of these drivers was ngxson/esphome-component-xteink
+(MIT), whose display/buttons/battery YAML shape this project keeps compatible.

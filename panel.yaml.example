@@ -1,0 +1,64 @@
+# inkpanel - everything the panel shows, in one file.
+#
+# Copy to panel.yaml and edit. No coordinates, no font sizes, no icon codepoints:
+# `tools/panel build` works those out, and splits any page that does not fit onto
+# a second page rather than squeezing it.
+#
+# Icons are Material Design Icons names (https://pictogrammers.com/library/mdi/).
+# An unknown name fails the build with a suggestion, rather than drawing an empty
+# box on a panel you have already flashed.
+
+panel:
+  name: hallway-panel              # lowercase, hyphens; becomes the hostname
+  friendly_name: Hallway Panel
+
+home:
+  # Optional. Up to 4 cells in a card across the lower third of Home.
+  # Polled every 30 s while Home is on screen, and redrawn ONLY when the value as
+  # DISPLAYED changes - so a quiet house costs no refreshes at all.
+  summary:
+    - { label: "Lights on", source: lights_on }
+    - { label: "Hall",      entity: sensor.hall_temperature, format: "%.1f°" }
+    - { label: "Solar now", entity: sensor.pv_power,         format: "%.1f kW" }
+    - { label: "Battery",   entity: sensor.battery_soc,      format: "%.0f%%" }
+
+pages:
+  - type: lights
+    title: Lights
+    icon: mdi:lightbulb
+    entities:
+      # dim: true adds a -/+ pair under the tile (20 % a press by default).
+      - { entity: light.kitchen,  label: "Kitchen & Dining", dim: true }
+      - { entity: light.office,   label: "Office",           dim: true, step: 10 }
+      - { entity: light.landing,  label: "Landing" }
+      - { entity: light.porch,    label: "Porch", icon: mdi:outdoor-lamp, icon_off: mdi:outdoor-lamp }
+
+  - type: climate
+    title: Climate
+    icon: mdi:thermometer-lines
+    entities:
+      - { entity: climate.hall,    label: "Hall thermostat", step: 0.5 }
+      - { entity: climate.bedroom, label: "Bedroom radiator", icon: mdi:radiator }
+
+  - type: media
+    title: Media
+    icon: mdi:television
+    entity: media_player.living_room_tv
+    label: "Living Room TV"
+
+  - type: readouts
+    title: Solar
+    icon: mdi:solar-power
+    entities:
+      - { entity: sensor.pv_power,   label: "Solar now", icon: mdi:solar-power,       format: "%.2f kW" }
+      - { entity: sensor.load_power, label: "House",     icon: mdi:home,              format: "%.2f kW" }
+      - { entity: sensor.grid_power, label: "Grid",      icon: mdi:transmission-tower, format: "%.2f kW" }
+      - { entity: sensor.battery_soc, label: "Battery",  icon: mdi:battery,           format: "%.0f%%" }
+
+  - type: readouts
+    title: Rooms
+    icon: mdi:home-thermometer
+    columns: 2                     # 2-up cells: twice as many per page, smaller values
+    entities:
+      - { entity: sensor.office_temperature,  label: "Office",  icon: mdi:desk,    format: "%.1f°" }
+      - { entity: sensor.landing_temperature, label: "Landing", icon: mdi:stairs,  format: "%.1f°" }

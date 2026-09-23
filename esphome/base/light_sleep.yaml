@@ -1,0 +1,62 @@
+# Processor light sleep while idle (see ../light_sleep.h). Active for 10 s after a
+# touch or key press; then the chip may light-sleep and the GT911 INT pin wakes it.
+esp32:
+  framework:
+    sdkconfig_options:
+      CONFIG_PM_ENABLE: y
+      CONFIG_FREERTOS_USE_TICKLESS_IDLE: y
+      # USB Serial/JTAG stops working in light sleep, which also blocks USB flashing.
+      # Hold a no-light-sleep lock while a USB host is actually connected.
+      CONFIG_USJ_NO_AUTO_LS_ON_CONNECTION: y
+
+globals:
+  - id: panel_active
+    type: bool
+    initial_value: "true"
+
+script:
+  # Restarted by every touch and key press. Active now; idle after 10 s untouched
+  # (and once any panel refresh has finished).
+  - id: idle_timer
+    mode: restart
+    then:
+      - lambda: |-
+          if (!id(panel_active)) {
+            id(panel_active) = true;
+            light_sleep::set_active(true);
+            light_sleep::wifi_idle(false);
+            id(tp)->disarm_irq_wake();
+            App.set_loop_interval(16);
+            for (PollingComponent *c : {(PollingComponent *) id(tp), (PollingComponent *) id(xteink_hub),
+                                        (PollingComponent *) id(xteink_buttons)}) {
+              c->stop_poller(); c->set_update_interval(20); c->start_poller();
+            }
+            ESP_LOGI("pm", "active");
+          }
+      - delay: 10s
+      - wait_until:
+          condition:
+            lambda: 'return !id(epd).is_refreshing();'
+          timeout: 5s
+      - lambda: |-
+          id(panel_active) = false;
+          App.set_loop_interval(500);
+          for (PollingComponent *c : {(PollingComponent *) id(tp), (PollingComponent *) id(xteink_hub),
+                                      (PollingComponent *) id(xteink_buttons)}) {
+            c->stop_poller(); c->set_update_interval(200); c->start_poller();
+          }
+          id(tp)->arm_irq_wake();
+          light_sleep::wifi_idle(true);
+          light_sleep::set_active(false);
+          ESP_LOGI("pm", "idle");
+
+esphome:
+  includes:
+    - light_sleep.h
+  on_boot:
+    priority: -200
+    then:
+      - lambda: |-
+          light_sleep::start();
+          id(tp)->enable_irq_wake(10);   // GT911 INT on the X4 Pro
+      - script.execute: idle_timer

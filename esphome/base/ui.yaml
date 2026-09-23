@@ -1,0 +1,129 @@
+# LVGL base for the 1-bit e-paper.
+#
+# NOTE on colours: the xteink display treats any nonzero colour as ink (black) and
+# 0 as paper (white), so LVGL colours are inverted here.
+substitutions:
+  paper: "0x000000"
+  ink: "0xFFFFFF"
+
+globals:
+  - id: clean_mark              # epd.update_count right after the last ghost-clearing refresh
+    type: uint64_t              # (update_count only rises for refreshes that really ran)
+    initial_value: "0"
+  - id: battery_shown           # battery % currently drawn in the status line
+    type: int
+    initial_value: "-1"
+  - id: last_page               # page to restore after deep sleep
+    type: int
+    restore_value: true
+    initial_value: "0"
+  - id: ui_ready                # false until the boot hook has restored the page: LVGL's
+    type: bool                  # own initial show_page(0) must not overwrite last_page
+    initial_value: "false"
+  - id: frame_dirty             # set when LVGL actually renders; on_draw_end fires every tick
+    type: bool
+    initial_value: "false"
+  - id: draw_t0
+    type: uint32_t
+    initial_value: "0"
+
+script:
+  # Fast (differential) refreshes leave faint ghosts. Rather than interrupt a tap with
+  # a slow clearing refresh, clear once the panel has been left alone.
+  - id: idle_clean
+    mode: restart
+    then:
+      - delay: 4s
+      - if:
+          condition:
+            lambda: 'return id(epd).update_count - id(clean_mark) >= 8;'
+          then:
+            - lambda: |-
+                id(clean_mark) = id(epd).update_count + 1;   // + the half refresh below
+                id(epd).set_refresh_mode(1);   // half refresh: scrubs ghosts, ~1.7 s
+                id(epd).update();
+
+lvgl:
+  id: lv
+  # The status line lives on the top layer so it shows on every page. Top-right,
+  # clear of the page headings which start at x 30.
+  top_layer:
+    widgets:
+      - label:
+          id: status_bar
+          styles: body
+          text_font: font_xs
+          align: TOP_RIGHT
+          x: -30
+          y: 18
+          text: !lambda |-
+            const float pct = id(battery_level).state;
+            if (std::isnan(pct)) return std::string("\U000F0091 --%");
+            const char *icon;
+            if      (pct >= 95) icon = "\U000F0079";   // battery (full)
+            else if (pct >= 85) icon = "\U000F0082";   // battery-90
+            else if (pct >= 75) icon = "\U000F0081";   // battery-80
+            else if (pct >= 65) icon = "\U000F0080";   // battery-70
+            else if (pct >= 55) icon = "\U000F007F";   // battery-60
+            else if (pct >= 45) icon = "\U000F007E";   // battery-50
+            else if (pct >= 35) icon = "\U000F007D";   // battery-40
+            else if (pct >= 25) icon = "\U000F007C";   // battery-30
+            else if (pct >= 15) icon = "\U000F007B";   // battery-20
+            else if (pct >=  5) icon = "\U000F007A";   // battery-10
+            else                icon = "\U000F008E";   // battery-outline
+            return str_sprintf("%s %.0f%%", icon, pct);
+  displays: [epd]
+  rotation: 270                 # portrait, key edge at the top
+  touchscreens: [tp]
+  # Partial rendering: the framebuffer persists, so LVGL redraws only what changed
+  # and the display component refreshes asynchronously (see components/xteink).
+  buffer_size: 100%
+  disp_bg_color: ${paper}
+  default_font: font_m
+  on_draw_start:
+    - lambda: |-
+        if (!id(frame_dirty)) id(draw_t0) = millis();
+        id(frame_dirty) = true;
+  on_draw_end:
+    - if:
+        condition:
+          lambda: 'return id(frame_dirty);'
+        then:
+          - lambda: |-
+              id(frame_dirty) = false;
+              ESP_LOGD("ui", "render took %u ms", (unsigned) (millis() - id(draw_t0)));
+              id(epd).update();        // async: returns while the panel refreshes
+          - script.execute: idle_clean
+  style_definitions:
+    - id: tile
+      bg_color: ${paper}
+      bg_opa: COVER
+      border_color: ${ink}
+      border_width: 3
+      radius: 8
+      shadow_width: 0
+      text_color: ${ink}
+    - id: tile_on
+      bg_color: ${ink}
+      bg_opa: COVER
+      text_color: ${paper}
+    - id: navbtn
+      bg_color: ${paper}
+      bg_opa: COVER
+      border_color: ${ink}
+      border_width: 2
+      radius: 4
+      shadow_width: 0
+      text_color: ${ink}
+    - id: heading
+      text_color: ${ink}
+      text_font: font_l
+    - id: body
+      text_color: ${ink}
+
+esphome:
+  includes:
+    - ui_helpers.h
+
+preferences:
+  flash_write_interval: 10s   # page index persists quickly (page changes are rare)

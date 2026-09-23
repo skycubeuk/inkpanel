@@ -1,0 +1,14 @@
+# Your panel. Copy panel.yaml.example to panel.yaml and edit.
+/panel.yaml
+
+# Generated ESPHome config (tools/panel generate) and build output
+/esphome/*.yaml
+!/esphome/secrets.yaml.example
+!/esphome/base/
+/esphome/secrets.yaml
+/esphome/.esphome/
+/firmware/*.bin
+
+# Local clones prepared for upstream contributions
+/upstream/
+__pycache__/
