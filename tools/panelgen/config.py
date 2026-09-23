@@ -43,10 +43,14 @@ class Climate:
 
 @dataclass
 class Readout:
-    entity: str
+    """One card. `entity` may name two entities, in which case whichever reads
+    higher is shown with its own format - the import/export, in/out,
+    charge/discharge pattern that energy dashboards are full of."""
+    entity: list
     label: str
     icon: str = "gauge"
-    format: str = "%.1f"
+    format: list = field(default_factory=lambda: ["%.1f"])
+    attribute: list = field(default_factory=lambda: [None])
 
 
 @dataclass
@@ -66,6 +70,7 @@ class SummaryCell:
     entity: str = ""
     source: str = ""
     format: str = "%.1f"
+    attribute: str = None
 
 
 @dataclass
@@ -129,10 +134,24 @@ def load(path):
                         label=_req(e, "label", w), icon=e.get("icon", "thermometer-lines"),
                         step=float(e.get("step", 0.5))))
                 else:
+                    ents = _req(e, "entity", w)
+                    ents = ents if isinstance(ents, list) else [ents]
+                    if not 1 <= len(ents) <= 2:
+                        raise ConfigError(f"{w}.entity: one entity, or two to show "
+                                          "whichever reads higher")
+                    fmts = e.get("format", "%.1f")
+                    fmts = fmts if isinstance(fmts, list) else [fmts] * len(ents)
+                    if len(fmts) != len(ents):
+                        raise ConfigError(f"{w}.format: give one format per entity "
+                                          f"({len(ents)} expected, {len(fmts)} given)")
+                    attrs = e.get("attribute")
+                    attrs = attrs if isinstance(attrs, list) else [attrs] * len(ents)
+                    if len(attrs) != len(ents):
+                        raise ConfigError(f"{w}.attribute: give one per entity")
                     page.entities.append(Readout(
-                        entity=_entity(_req(e, "entity", w), w),
+                        entity=[_entity(x, w) for x in ents],
                         label=_req(e, "label", w), icon=e.get("icon", "gauge"),
-                        format=e.get("format", "%.1f")))
+                        format=fmts, attribute=attrs))
             for e in page.entities:
                 icons.codepoint(getattr(e, "icon", None) or e.icon_on)
                 if isinstance(e, Light):
@@ -153,6 +172,7 @@ def load(path):
             cell.source = c["source"]
         elif "entity" in c:
             cell.entity = _entity(c["entity"], w)
+            cell.attribute = c.get("attribute")
         else:
             raise ConfigError(f"{w}: needs either 'entity' or 'source'")
         summary.append(cell)

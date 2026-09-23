@@ -119,7 +119,7 @@ class Emitter:
               id(sum{i}_shown) = v;
               return true;"""))
             else:
-                sid = self._sensor(c.entity)
+                sid = self._sensor(c.entity, c.attribute)
                 body += [f"                    const float x = id({sid}).state;",
                          f"                    return std::isnan(x) ? std::string(\"--\") : str_sprintf({_q(c.format)}, x);"]
                 checks.append((i, f"""const float x = id({sid}).state;
@@ -283,11 +283,25 @@ class Emitter:
                              f"              - label: {{ x: 0, y: 40, text: {_q(e.label)}, text_font: font_s }}",
                              "              - label:", f"                  id: p{pi}e{ei}_val",
                              "                  align: TOP_RIGHT", f"                  text_font: {vfont}"]
-                inner.append(f"                  text: !lambda 'const float v = id(p{pi}e{ei}_src).state;"
-                             f" return std::isnan(v) ? std::string(\"--\") : str_sprintf({_q(e.format)}, v);'")
+                if len(e.entity) == 1:
+                    inner.append(
+                        f"                  text: !lambda 'const float v = id(p{pi}e{ei}_src0).state;"
+                        f" return std::isnan(v) ? std::string(\"--\") : str_sprintf({_q(e.format[0])}, v);'")
+                else:
+                    inner += ["                  text: !lambda |-",
+                              f"                    const float a = id(p{pi}e{ei}_src0).state,"
+                              f" b = id(p{pi}e{ei}_src1).state;",
+                              "                    if (std::isnan(a) && std::isnan(b)) return std::string(\"--\");",
+                              "                    const float av = std::isnan(a) ? 0.0f : a,"
+                              " bv = std::isnan(b) ? 0.0f : b;",
+                              f"                    return bv > av ? str_sprintf({_q(e.format[1])}, bv)",
+                              f"                                  : str_sprintf({_q(e.format[0])}, av);"]
                 body += self.card(t.x, t.y, t.w, t.h, pad=12) + inner
-                self.sensors.append(
-                    f"  - platform: homeassistant\n    id: p{pi}e{ei}_src\n    entity_id: {e.entity}")
+                for k, ent in enumerate(e.entity):
+                    attr = f"\n    attribute: {e.attribute[k]}" if e.attribute[k] else ""
+                    self.sensors.append(
+                        f"  - platform: homeassistant\n    id: p{pi}e{ei}_src{k}\n"
+                        f"    entity_id: {ent}{attr}")
             self.intervals.append(
                 f"  - interval: 60s\n    then:\n      - if:\n          condition:\n"
                 f"            lambda: 'return lv_screen_active() == id({pid})->obj;'\n"
@@ -427,9 +441,10 @@ class Emitter:
                 f"  - label: {{ text: {_q(lbl)}, text_font: font_s }}", *press])
         return [("Settings", "cog", pid, body)]
 
-    def _sensor(self, entity):
-        sid = "sum_" + entity.replace(".", "_")
-        line = f"  - platform: homeassistant\n    id: {sid}\n    entity_id: {entity}"
+    def _sensor(self, entity, attribute=None):
+        sid = "sum_" + entity.replace(".", "_") + (f"_{attribute}" if attribute else "")
+        attr = f"\n    attribute: {attribute}" if attribute else ""
+        line = f"  - platform: homeassistant\n    id: {sid}\n    entity_id: {entity}{attr}"
         if line not in self.sensors:
             self.sensors.append(line)
         return sid
