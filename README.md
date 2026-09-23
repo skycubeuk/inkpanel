@@ -30,6 +30,11 @@ pages:
 tools/panel build && tools/panel flash
 ```
 
+Then adopt it in Home Assistant (**Settings > Devices & services**, it is
+discovered over mDNS) and tick *"Allow the device to perform Home Assistant
+actions"* so taps do something -
+[getting-started.md](docs/getting-started.md) walks through both.
+
 No coordinates, no font sizes, no icon codepoints. The generator lays out the
 pages, splits anything that does not fit, and compiles in exactly the Material
 Design Icons glyphs you referenced - at the sizes they are drawn at.
