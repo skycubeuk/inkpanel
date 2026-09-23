@@ -61,9 +61,15 @@ def cmd_flash(a):
         sys.exit(f"error: {img.relative_to(ROOT)} not found - run 'tools/panel build' first.")
     # ota_0 only. An ESPHome OTA writes the *other* slot, which is where the
     # stock reader firmware lives.
-    sys.exit(subprocess.call([
+    rc = subprocess.call([
         "esptool", "--chip", "esp32s3", "--port", a.port, "--baud", "921600",
-        "write-flash", "0x10000", str(img)]))
+        "write-flash", "0x10000", str(img)])
+    if rc:
+        sys.exit(rc)
+    # Writing the slot is not the same as booting it. A device still coming from
+    # the stock firmware boots ota_1, so without this the flash "succeeds" and
+    # nothing on screen changes.
+    sys.exit(subprocess.call([str(ROOT / "scripts/select-slot.sh"), "slot0", a.port]))
 
 
 def cmd_logs(a):
