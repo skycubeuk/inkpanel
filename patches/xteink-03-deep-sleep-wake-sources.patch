@@ -1,0 +1,23 @@
+diff --git a/esphome/components/xteink/xteink.cpp b/esphome/components/xteink/xteink.cpp
+index 68fe8dd..862a377 100644
+--- a/esphome/components/xteink/xteink.cpp
++++ b/esphome/components/xteink/xteink.cpp
+@@ -60,6 +60,18 @@ static void hold_pin(int8_t pin, int level) {
+ }
+ 
+ void Xteink::on_powerdown() {
++  // Light sleep and deep sleep share one global esp_sleep config, and light sleep
++  // leaves its wake sources armed. Deep sleep then inherits them and returns within
++  // milliseconds, waking and sleeping forever (measured: wakeup cause TIMER, then
++  // GPIO once the timer was cleared; reset reason DEEPSLEEP both times).
++  //   - TIMER: armed by every tickless-idle nap (CONFIG_PM_ENABLE), a few ms out.
++  //   - GPIO:  armed once by a touch-to-wake IRQ, and the touch rail is switched
++  //            off below, so the controller can no longer hold its INT line high.
++  // Deep sleep has its own wakeup_pin, so neither is ever wanted here. This runs
++  // from run_powerdown_hooks(), after teardown and immediately before
++  // esp_deep_sleep_start(), so no further nap can re-arm them.
++  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_TIMER);
++  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_GPIO);
+   // Park the panel: booster off + DSLP. The SDK now skips the power-off sequence
+   // when the screen is already off (re-issuing it after a full refresh hung on
+   // BUSY and tripped the 5 s task watchdog, rebooting instead of sleeping). Feed
